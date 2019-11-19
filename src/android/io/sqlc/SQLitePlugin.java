@@ -83,7 +83,7 @@ public class SQLitePlugin extends CordovaPlugin {
         boolean status = true;
         JSONObject o;
         String echo_value;
-        String dbname;
+        final String[] dbname = new String[1];
 
         switch (action) {
             case echoStringValue:
@@ -94,60 +94,73 @@ public class SQLitePlugin extends CordovaPlugin {
 
             case open:
                 o = args.getJSONObject(0);
-                dbname = o.getString("name");
+                dbname[0] = o.getString("name");
                 // open database and start reading its queue
-                this.startDatabase(dbname, o, cbc);
+                this.startDatabase(dbname[0], o, cbc);
                 break;
 
             case close:
                 o = args.getJSONObject(0);
-                dbname = o.getString("path");
+                dbname[0] = o.getString("path");
                 // put request in the q to close the db
-                this.closeDatabase(dbname, cbc);
+                this.closeDatabase(dbname[0], cbc);
                 break;
 
             case delete:
                 o = args.getJSONObject(0);
-                dbname = o.getString("path");
+                dbname[0] = o.getString("path");
 
-                deleteDatabase(dbname, cbc);
+                deleteDatabase(dbname[0], cbc);
 
                 break;
 
             case executeSqlBatch:
             case backgroundExecuteSqlBatch:
-                JSONObject allargs = args.getJSONObject(0);
-                JSONObject dbargs = allargs.getJSONObject("dbargs");
-                dbname = dbargs.getString("dbname");
-                JSONArray txargs = allargs.getJSONArray("executes");
-
-                if (txargs.isNull(0)) {
-                    cbc.error("INTERNAL PLUGIN ERROR: missing executes list");
-                } else {
-                    int len = txargs.length();
-                    String[] queries = new String[len];
-                    JSONArray[] jsonparams = new JSONArray[len];
-
-                    for (int i = 0; i < len; i++) {
-                        JSONObject a = txargs.getJSONObject(i);
-                        queries[i] = a.getString("sql");
-                        jsonparams[i] = a.getJSONArray("params");
-                    }
-
-                    // put db query in the queue to be executed in the db thread:
-                    DBQuery q = new DBQuery(queries, jsonparams, cbc);
-                    DBRunner r = dbrmap.get(dbname);
-                    if (r != null) {
+                cordova.getThreadPool().execute(new Runnable() {
+                    @Override
+                    public void run() {
                         try {
-                            r.q.put(q);
-                        } catch(Exception e) {
-                            Log.e(SQLitePlugin.class.getSimpleName(), "couldn't add to queue", e);
-                            cbc.error("INTERNAL PLUGIN ERROR: couldn't add to queue");
+
+                        JSONObject allargs = args.getJSONObject(0);
+                        JSONObject dbargs = allargs.getJSONObject("dbargs");
+                        dbname[0] = dbargs.getString("dbname");
+                        JSONArray txargs = allargs.getJSONArray("executes");
+
+                        if (txargs.isNull(0)) {
+                            cbc.error("INTERNAL PLUGIN ERROR: missing executes list");
+                        } else {
+                            int len = txargs.length();
+                            String[] queries = new String[len];
+                            JSONArray[] jsonparams = new JSONArray[len];
+
+                            for (int i = 0; i < len; i++) {
+                                JSONObject a = txargs.getJSONObject(i);
+                                queries[i] = a.getString("sql");
+                                jsonparams[i] = a.getJSONArray("params");
+                            }
+
+                            // put db query in the queue to be executed in the db thread:
+                            DBQuery q = new DBQuery(queries, jsonparams, cbc);
+                            DBRunner r = dbrmap.get(dbname[0]);
+                            if (r != null) {
+                                try {
+                                    r.q.put(q);
+                                } catch(Exception e) {
+                                    Log.e(SQLitePlugin.class.getSimpleName(), "couldn't add to queue", e);
+                                    cbc.error("INTERNAL PLUGIN ERROR: couldn't add to queue");
+                                }
+                            } else {
+                                cbc.error("INTERNAL PLUGIN ERROR: database not open");
+                            }
                         }
-                    } else {
-                        cbc.error("INTERNAL PLUGIN ERROR: database not open");
+                        } catch (JSONException e) {
+                            // TODO: signal JSON problem to JS
+                            Log.e(SQLitePlugin.class.getSimpleName(), "unexpected error", e);
+                            cbc.error("unexpected error for " + action.name());
+                        }
                     }
-                }
+                });
+
                 break;
         }
 
